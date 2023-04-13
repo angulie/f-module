@@ -41,20 +41,22 @@ These modules are used in the examples included in this repository. If you are u
 
 ## Networking modules
 
-- [DNS](./dns)
+- [Address reservation](./net-address)
 - [Cloud Endpoints](./endpoints)
-- [address reservation](./net-address)
-- [NAT](./net-cloudnat)
+- [DNS](./dns)
+- [DNS Response Policy](./dns-response-policy/)
 - [Global Load Balancer (classic)](./net-glb/)
 - [L4 ILB](./net-ilb)
 - [L7 ILB](./net-ilb-l7)
+- [NAT](./net-cloudnat)
+- [Service Directory](./service-directory)
 - [VPC](./net-vpc)
 - [VPC firewall](./net-vpc-firewall)
-- [VPC peering](./net-vpc-peering)
+- [VPC firewall policy](./net-vpc-firewall-policy)
 - [VPN dynamic](./net-vpn-dynamic)
-- [HA VPN](./net-vpn-ha)
+- [VPC peering](./net-vpc-peering)
+- [VPN HA](./net-vpn-ha)
 - [VPN static](./net-vpn-static)
-- [Service Directory](./service-directory)
 
 ## Compute/Container
 
@@ -72,14 +74,14 @@ These modules are used in the examples included in this repository. If you are u
 - [Cloud SQL instance](./cloudsql-instance)
 - [Data Catalog Policy Tag](./data-catalog-policy-tag)
 - [Datafusion](./datafusion)
+- [Dataproc](./dataproc)
 - [GCS](./gcs)
 - [Pub/Sub](./pubsub)
 
 ## Development
 
 - [API Gateway](./api-gateway)
-- [Apigee Organization](./apigee-organization)
-- [Apigee X Instance](./apigee-x-instance)
+- [Apigee](./apigee)
 - [Artifact Registry](./artifact-registry)
 - [Container Registry](./container-registry)
 - [Cloud Source Repository](./source-repository)
