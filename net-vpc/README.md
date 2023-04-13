@@ -1,10 +1,25 @@
-# Minimalistic VPC module
+# VPC module
 
-This module allows creation and management of VPC networks including subnetworks and subnetwork IAM bindings, Shared VPC activation and service project registration, and one-to-one peering.
+This module allows creation and management of VPC networks including subnetworks and subnetwork IAM bindings, and most features and options related to VPCs and subnets.
 
 ## Examples
 
-The module allows for several different VPC configurations, some of the most common are shown below.
+- [VPC module](#vpc-module)
+  - [Examples](#examples)
+    - [Simple VPC](#simple-vpc)
+    - [Subnet Options](#subnet-options)
+    - [Subnet IAM](#subnet-iam)
+    - [Peering](#peering)
+    - [Shared VPC](#shared-vpc)
+    - [Private Service Networking](#private-service-networking)
+    - [Private Service Networking with peering routes](#private-service-networking-with-peering-routes)
+    - [Subnets for Private Service Connect, Proxy-only subnets](#subnets-for-private-service-connect-proxy-only-subnets)
+    - [DNS Policies](#dns-policies)
+    - [Subnet Factory](#subnet-factory)
+    - [Custom Routes](#custom-routes)
+    - [Allow Firewall Policy to be evaluated before Firewall Rules](#allow-firewall-policy-to-be-evaluated-before-firewall-rules)
+  - [Variables](#variables)
+  - [Outputs](#outputs)
 
 ### Simple VPC
 
@@ -30,7 +45,91 @@ module "vpc" {
     }
   ]
 }
-# tftest modules=1 resources=3
+# tftest modules=1 resources=3 inventory=simple.yaml
+```
+
+### Subnet Options
+
+```hcl
+module "vpc" {
+  source     = "./fabric/modules/net-vpc"
+  project_id = "my-project"
+  name       = "my-network"
+  subnets = [
+    # simple subnet
+    {
+      name          = "simple"
+      region        = "europe-west1"
+      ip_cidr_range = "10.0.0.0/24"
+    },
+    # custom description and PGA disabled
+    {
+      name                  = "no-pga"
+      region                = "europe-west1"
+      ip_cidr_range         = "10.0.1.0/24",
+      description           = "Subnet b"
+      enable_private_access = false
+    },
+    # secondary ranges
+    {
+      name          = "with-secondary-ranges"
+      region        = "europe-west1"
+      ip_cidr_range = "10.0.2.0/24"
+      secondary_ip_ranges = {
+        a = "192.168.0.0/24"
+        b = "192.168.1.0/24"
+      }
+    },
+    # enable flow logs
+    {
+      name          = "with-flow-logs"
+      region        = "europe-west1"
+      ip_cidr_range = "10.0.3.0/24"
+      flow_logs_config = {
+        flow_sampling        = 0.5
+        aggregation_interval = "INTERVAL_10_MIN"
+      }
+    }
+  ]
+}
+# tftest modules=1 resources=5 inventory=subnet-options.yaml
+```
+
+### Subnet IAM
+
+```hcl
+module "vpc" {
+  source     = "./fabric/modules/net-vpc"
+  project_id = "my-project"
+  name       = "my-network"
+  subnets = [
+    {
+      name          = "subnet-1"
+      region        = "europe-west1"
+      ip_cidr_range = "10.0.1.0/24"
+    },
+    {
+      name          = "subnet-2"
+      region        = "europe-west1"
+      ip_cidr_range = "10.0.1.0/24"
+    }
+  ]
+  subnet_iam = {
+    "europe-west1/subnet-1" = {
+      "roles/compute.networkUser" = [
+        "user:user1@example.com", "group:group1@example.com"
+      ]
+    }
+  }
+  subnet_iam_additive = {
+    "europe-west1/subnet-2" = {
+      "roles/compute.networkUser" = [
+        "user:user2@example.com", "group:group2@example.com"
+      ]
+    }
+  }
+}
+# tftest modules=1 resources=6 inventory=subnet-iam.yaml
 ```
 
 ### Peering
@@ -45,9 +144,9 @@ module "vpc-hub" {
   project_id = "hub"
   name       = "vpc-hub"
   subnets = [{
-    ip_cidr_range      = "10.0.0.0/24"
-    name               = "subnet-1"
-    region             = "europe-west1"
+    ip_cidr_range = "10.0.0.0/24"
+    name          = "subnet-1"
+    region        = "europe-west1"
   }]
 }
 
@@ -56,16 +155,16 @@ module "vpc-spoke-1" {
   project_id = "spoke1"
   name       = "vpc-spoke1"
   subnets = [{
-    ip_cidr_range      = "10.0.1.0/24"
-    name               = "subnet-2"
-    region             = "europe-west1"
+    ip_cidr_range = "10.0.1.0/24"
+    name          = "subnet-2"
+    region        = "europe-west1"
   }]
   peering_config = {
     peer_vpc_self_link = module.vpc-hub.self_link
     import_routes      = true
   }
 }
-# tftest modules=2 resources=6
+# tftest modules=2 resources=6 inventory=peering.yaml
 ```
 
 ### Shared VPC
@@ -75,9 +174,9 @@ module "vpc-spoke-1" {
 ```hcl
 locals {
   service_project_1 = {
-    project_id = "project1"
-    gke_service_account = "gke"
-    cloud_services_service_account = "cloudsvc"
+    project_id                     = "project1"
+    gke_service_account            = "serviceAccount:gke"
+    cloud_services_service_account = "serviceAccount:cloudsvc"
   }
   service_project_2 = {
     project_id = "project2"
@@ -93,7 +192,7 @@ module "vpc-host" {
       ip_cidr_range = "10.0.0.0/24"
       name          = "subnet-1"
       region        = "europe-west1"
-      secondary_ip_range = {
+      secondary_ip_ranges = {
         pods     = "172.16.0.0/20"
         services = "192.168.0.0/24"
       }
@@ -116,7 +215,7 @@ module "vpc-host" {
     }
   }
 }
-# tftest modules=1 resources=7
+# tftest modules=1 resources=7 inventory=shared-vpc.yaml
 ```
 
 ### Private Service Networking
@@ -128,16 +227,16 @@ module "vpc" {
   name       = "my-network"
   subnets = [
     {
-      ip_cidr_range      = "10.0.0.0/24"
-      name               = "production"
-      region             = "europe-west1"
+      ip_cidr_range = "10.0.0.0/24"
+      name          = "production"
+      region        = "europe-west1"
     }
   ]
   psa_config = {
     ranges = { myrange = "10.0.1.0/24" }
   }
 }
-# tftest modules=1 resources=5
+# tftest modules=1 resources=5 inventory=psc.yaml
 ```
 
 ### Private Service Networking with peering routes
@@ -151,18 +250,18 @@ module "vpc" {
   name       = "my-network"
   subnets = [
     {
-      ip_cidr_range      = "10.0.0.0/24"
-      name               = "production"
-      region             = "europe-west1"
+      ip_cidr_range = "10.0.0.0/24"
+      name          = "production"
+      region        = "europe-west1"
     }
   ]
   psa_config = {
-    ranges = { myrange = "10.0.1.0/24" }
+    ranges        = { myrange = "10.0.1.0/24" }
     export_routes = true
     import_routes = true
   }
 }
-# tftest modules=1 resources=5
+# tftest modules=1 resources=5 inventory=psc-routes.yaml
 ```
 
 ### Subnets for Private Service Connect, Proxy-only subnets
@@ -194,7 +293,7 @@ module "vpc" {
     }
   ]
 }
-# tftest modules=1 resources=3
+# tftest modules=1 resources=3 inventory=proxy-only-subnets.yaml
 ```
 
 ### DNS Policies
@@ -205,7 +304,7 @@ module "vpc" {
   project_id = "my-project"
   name       = "my-network"
   dns_policy = {
-    inbound  = true
+    inbound = true
     outbound = {
       private_ns = ["10.0.0.1"]
       public_ns  = ["8.8.8.8"]
@@ -213,18 +312,18 @@ module "vpc" {
   }
   subnets = [
     {
-      ip_cidr_range      = "10.0.0.0/24"
-      name               = "production"
-      region             = "europe-west1"
+      ip_cidr_range = "10.0.0.0/24"
+      name          = "production"
+      region        = "europe-west1"
     }
   ]
 }
-# tftest modules=1 resources=3
+# tftest modules=1 resources=3 inventory=dns-policies.yaml
 ```
 
 ### Subnet Factory
 
-The `net-vpc` module includes a subnet factory (see [Resource Factories](../../blueprints/factories/)) for the massive creation of subnets leveraging one configuration file per subnet.
+The `net-vpc` module includes a subnet factory (see [Resource Factories](../../blueprints/factories/)) for the massive creation of subnets leveraging one configuration file per subnet. The factory also supports proxy-only and PSC subnets via the `purpose` attribute. The `name` attribute is optional and defaults to the file name, allowing to use the same name for subnets in different regions.
 
 ```hcl
 module "vpc" {
@@ -233,25 +332,124 @@ module "vpc" {
   name        = "my-network"
   data_folder = "config/subnets"
 }
-# tftest skip
+# tftest modules=1 resources=9 files=subnet-simple,subnet-simple-2,subnet-detailed,subnet-proxy,subnet-psc inventory=factory.yaml
 ```
 
 ```yaml
-# ./config/subnets/subnet-name.yaml
+# tftest-file id=subnet-simple path=config/subnets/subnet-simple.yaml
+name: simple
+region: europe-west4
+ip_cidr_range: 10.0.1.0/24
+```
+
+```yaml
+# tftest-file id=subnet-simple-2 path=config/subnets/subnet-simple-2.yaml
+name: simple
+region: europe-west8
+ip_cidr_range: 10.0.2.0/24
+```
+
+```yaml
+# tftest-file id=subnet-detailed path=config/subnets/subnet-detailed.yaml
 region: europe-west1
 description: Sample description
 ip_cidr_range: 10.0.0.0/24
 # optional attributes
-enable_private_access: false   # defaults to true
-iam_users: ["foobar@example.com"] # grant compute/networkUser to users
-iam_groups: ["lorem@example.com"] # grant compute/networkUser to groups
-iam_service_accounts: ["fbz@prj.iam.gserviceaccount.com"]
-secondary_ip_ranges:              # map of secondary ip ranges
+enable_private_access: false  # defaults to true
+iam:                          # grant roles/compute.networkUser
+  - group:lorem@example.com
+  - serviceAccount:fbz@prj.iam.gserviceaccount.com
+  - user:foobar@example.com
+iam_additive:                 # grant roles/compute.networkUser
+  - user:foo@example.com
+  - serviceAccount:fbx@prj.iam.gserviceaccount.com
+secondary_ip_ranges:          # map of secondary ip ranges
   secondary-range-a: 192.168.0.0/24
-flow_logs:                        # enable, set to empty map to use defaults
-  - aggregation_interval: "INTERVAL_5_SEC"
-  - flow_sampling: 0.5
-  - metadata: "INCLUDE_ALL_METADATA"
+flow_logs:                    # enable, set to empty map to use defaults
+  aggregation_interval: "INTERVAL_5_SEC"
+  flow_sampling: 0.5
+  metadata: "INCLUDE_ALL_METADATA"
+  filter_expression: null
+```
+
+```yaml
+# tftest-file id=subnet-proxy path=config/subnets/subnet-proxy.yaml
+region: europe-west4
+ip_cidr_range: 10.1.0.0/24
+purpose: REGIONAL_MANAGED_PROXY
+```
+
+```yaml
+# tftest-file id=subnet-psc path=config/subnets/subnet-psc.yaml
+region: europe-west4
+ip_cidr_range: 10.2.0.0/24
+purpose: PRIVATE_SERVICE_CONNECT
+```
+
+### Custom Routes
+
+VPC routes can be configured through the `routes` variable.
+
+```hcl
+locals {
+  route_types = {
+    gateway    = "global/gateways/default-internet-gateway"
+    instance   = "zones/europe-west1-b/test"
+    ip         = "192.168.0.128"
+    ilb        = "regions/europe-west1/forwardingRules/test"
+    vpn_tunnel = "regions/europe-west1/vpnTunnels/foo"
+  }
+}
+module "vpc" {
+  source     = "./fabric/modules/net-vpc"
+  for_each   = local.route_types
+  project_id = "my-project"
+  name       = "my-network-with-route-${replace(each.key, "_", "-")}"
+  routes = {
+    next-hop = {
+      dest_range    = "192.168.128.0/24"
+      tags          = null
+      next_hop_type = each.key
+      next_hop      = each.value
+    }
+    gateway = {
+      dest_range    = "0.0.0.0/0",
+      priority      = 100
+      tags          = ["tag-a"]
+      next_hop_type = "gateway",
+      next_hop      = "global/gateways/default-internet-gateway"
+    }
+  }
+}
+# tftest modules=5 resources=15 inventory=routes.yaml
+```
+
+### Allow Firewall Policy to be evaluated before Firewall Rules
+
+```hcl
+module "vpc" {
+  source                            = "./fabric/modules/net-vpc"
+  project_id                        = "my-project"
+  name                              = "my-network"
+  firewall_policy_enforcement_order = "BEFORE_CLASSIC_FIREWALL"
+  subnets = [
+    {
+      ip_cidr_range = "10.0.0.0/24"
+      name          = "production"
+      region        = "europe-west1"
+      secondary_ip_ranges = {
+        pods     = "172.16.0.0/20"
+        services = "192.168.0.0/24"
+      }
+    },
+    {
+      ip_cidr_range = "10.0.16.0/24"
+      name          = "production"
+      region        = "europe-west2"
+    }
+  ]
+}
+# tftest modules=1 resources=3 inventory=firewall_policy_enforcement_order.yaml
 ```
 <!-- BEGIN TFDOC -->
 
@@ -259,25 +457,27 @@ flow_logs:                        # enable, set to empty map to use defaults
 
 | name | description | type | required | default |
 |---|---|:---:|:---:|:---:|
-| [name](variables.tf#L60) | The name of the network being created. | <code>string</code> | ✓ |  |
-| [project_id](variables.tf#L76) | The ID of the project where this VPC will be created. | <code>string</code> | ✓ |  |
+| [name](variables.tf#L72) | The name of the network being created. | <code>string</code> | ✓ |  |
+| [project_id](variables.tf#L88) | The ID of the project where this VPC will be created. | <code>string</code> | ✓ |  |
 | [auto_create_subnetworks](variables.tf#L17) | Set to true to create an auto mode subnet, defaults to custom mode. | <code>bool</code> |  | <code>false</code> |
 | [data_folder](variables.tf#L23) | An optional folder containing the subnet configurations in YaML format. | <code>string</code> |  | <code>null</code> |
 | [delete_default_routes_on_create](variables.tf#L29) | Set to true to delete the default routes at creation time. | <code>bool</code> |  | <code>false</code> |
 | [description](variables.tf#L35) | An optional description of this resource (triggers recreation on change). | <code>string</code> |  | <code>&#34;Terraform-managed.&#34;</code> |
 | [dns_policy](variables.tf#L41) | DNS policy setup for the VPC. | <code title="object&#40;&#123;&#10;  inbound &#61; optional&#40;bool&#41;&#10;  logging &#61; optional&#40;bool&#41;&#10;  outbound &#61; optional&#40;object&#40;&#123;&#10;    private_ns &#61; list&#40;string&#41;&#10;    public_ns  &#61; list&#40;string&#41;&#10;  &#125;&#41;&#41;&#10;&#125;&#41;">object&#40;&#123;&#8230;&#125;&#41;</code> |  | <code>null</code> |
-| [mtu](variables.tf#L54) | Maximum Transmission Unit in bytes. The minimum value for this field is 1460 (the default) and the maximum value is 1500 bytes. | <code>number</code> |  | <code>null</code> |
-| [peering_config](variables.tf#L65) | VPC peering configuration. | <code title="object&#40;&#123;&#10;  peer_vpc_self_link &#61; string&#10;  create_remote_peer &#61; optional&#40;bool, true&#41;&#10;  export_routes      &#61; optional&#40;bool&#41;&#10;  import_routes      &#61; optional&#40;bool&#41;&#10;&#125;&#41;">object&#40;&#123;&#8230;&#125;&#41;</code> |  | <code>null</code> |
-| [psa_config](variables.tf#L81) | The Private Service Access configuration for Service Networking. | <code title="object&#40;&#123;&#10;  ranges        &#61; map&#40;string&#41;&#10;  export_routes &#61; optional&#40;bool, false&#41;&#10;  import_routes &#61; optional&#40;bool, false&#41;&#10;&#125;&#41;">object&#40;&#123;&#8230;&#125;&#41;</code> |  | <code>null</code> |
-| [routes](variables.tf#L91) | Network routes, keyed by name. | <code title="map&#40;object&#40;&#123;&#10;  dest_range    &#61; string&#10;  next_hop_type &#61; string &#35; gateway, instance, ip, vpn_tunnel, ilb&#10;  next_hop      &#61; string&#10;  priority      &#61; optional&#40;number&#41;&#10;  tags          &#61; optional&#40;list&#40;string&#41;&#41;&#10;&#125;&#41;&#41;">map&#40;object&#40;&#123;&#8230;&#125;&#41;&#41;</code> |  | <code>&#123;&#125;</code> |
-| [routing_mode](variables.tf#L111) | The network routing mode (default 'GLOBAL'). | <code>string</code> |  | <code>&#34;GLOBAL&#34;</code> |
-| [shared_vpc_host](variables.tf#L121) | Enable shared VPC for this project. | <code>bool</code> |  | <code>false</code> |
-| [shared_vpc_service_projects](variables.tf#L127) | Shared VPC service projects to register with this host. | <code>list&#40;string&#41;</code> |  | <code>&#91;&#93;</code> |
-| [subnet_iam](variables.tf#L133) | Subnet IAM bindings in {REGION/NAME => {ROLE => [MEMBERS]} format. | <code>map&#40;map&#40;list&#40;string&#41;&#41;&#41;</code> |  | <code>&#123;&#125;</code> |
-| [subnets](variables.tf#L139) | Subnet configuration. | <code title="list&#40;object&#40;&#123;&#10;  name                  &#61; string&#10;  ip_cidr_range         &#61; string&#10;  region                &#61; string&#10;  description           &#61; optional&#40;string&#41;&#10;  enable_private_access &#61; optional&#40;bool, true&#41;&#10;  flow_logs_config &#61; optional&#40;object&#40;&#123;&#10;    aggregation_interval &#61; optional&#40;string&#41;&#10;    filter_expression    &#61; optional&#40;string&#41;&#10;    flow_sampling        &#61; optional&#40;number&#41;&#10;    metadata             &#61; optional&#40;string&#41;&#10;    metadata_fields &#61; optional&#40;list&#40;string&#41;&#41;&#10;  &#125;&#41;&#41;&#10;  ipv6 &#61; optional&#40;object&#40;&#123;&#10;    access_type           &#61; optional&#40;string&#41;&#10;    enable_private_access &#61; optional&#40;bool, true&#41;&#10;  &#125;&#41;&#41;&#10;  secondary_ip_ranges &#61; optional&#40;map&#40;string&#41;&#41;&#10;&#125;&#41;&#41;">list&#40;object&#40;&#123;&#8230;&#125;&#41;&#41;</code> |  | <code>&#91;&#93;</code> |
-| [subnets_proxy_only](variables.tf#L164) | List of proxy-only subnets for Regional HTTPS  or Internal HTTPS load balancers. Note: Only one proxy-only subnet for each VPC network in each region can be active. | <code title="list&#40;object&#40;&#123;&#10;  name          &#61; string&#10;  ip_cidr_range &#61; string&#10;  region        &#61; string&#10;  description   &#61; optional&#40;string&#41;&#10;  active        &#61; bool&#10;&#125;&#41;&#41;">list&#40;object&#40;&#123;&#8230;&#125;&#41;&#41;</code> |  | <code>&#91;&#93;</code> |
-| [subnets_psc](variables.tf#L176) | List of subnets for Private Service Connect service producers. | <code title="list&#40;object&#40;&#123;&#10;  name          &#61; string&#10;  ip_cidr_range &#61; string&#10;  region        &#61; string&#10;  description   &#61; optional&#40;string&#41;&#10;&#125;&#41;&#41;">list&#40;object&#40;&#123;&#8230;&#125;&#41;&#41;</code> |  | <code>&#91;&#93;</code> |
-| [vpc_create](variables.tf#L187) | Create VPC. When set to false, uses a data source to reference existing VPC. | <code>bool</code> |  | <code>true</code> |
+| [firewall_policy_enforcement_order](variables.tf#L54) | Order that Firewall Rules and Firewall Policies are evaluated. Can be either 'BEFORE_CLASSIC_FIREWALL' or 'AFTER_CLASSIC_FIREWALL'. | <code>string</code> |  | <code>&#34;AFTER_CLASSIC_FIREWALL&#34;</code> |
+| [mtu](variables.tf#L66) | Maximum Transmission Unit in bytes. The minimum value for this field is 1460 (the default) and the maximum value is 1500 bytes. | <code>number</code> |  | <code>null</code> |
+| [peering_config](variables.tf#L77) | VPC peering configuration. | <code title="object&#40;&#123;&#10;  peer_vpc_self_link &#61; string&#10;  create_remote_peer &#61; optional&#40;bool, true&#41;&#10;  export_routes      &#61; optional&#40;bool&#41;&#10;  import_routes      &#61; optional&#40;bool&#41;&#10;&#125;&#41;">object&#40;&#123;&#8230;&#125;&#41;</code> |  | <code>null</code> |
+| [psa_config](variables.tf#L93) | The Private Service Access configuration for Service Networking. | <code title="object&#40;&#123;&#10;  ranges        &#61; map&#40;string&#41;&#10;  export_routes &#61; optional&#40;bool, false&#41;&#10;  import_routes &#61; optional&#40;bool, false&#41;&#10;&#125;&#41;">object&#40;&#123;&#8230;&#125;&#41;</code> |  | <code>null</code> |
+| [routes](variables.tf#L103) | Network routes, keyed by name. | <code title="map&#40;object&#40;&#123;&#10;  dest_range    &#61; string&#10;  next_hop_type &#61; string &#35; gateway, instance, ip, vpn_tunnel, ilb&#10;  next_hop      &#61; string&#10;  priority      &#61; optional&#40;number&#41;&#10;  tags          &#61; optional&#40;list&#40;string&#41;&#41;&#10;&#125;&#41;&#41;">map&#40;object&#40;&#123;&#8230;&#125;&#41;&#41;</code> |  | <code>&#123;&#125;</code> |
+| [routing_mode](variables.tf#L123) | The network routing mode (default 'GLOBAL'). | <code>string</code> |  | <code>&#34;GLOBAL&#34;</code> |
+| [shared_vpc_host](variables.tf#L133) | Enable shared VPC for this project. | <code>bool</code> |  | <code>false</code> |
+| [shared_vpc_service_projects](variables.tf#L139) | Shared VPC service projects to register with this host. | <code>list&#40;string&#41;</code> |  | <code>&#91;&#93;</code> |
+| [subnet_iam](variables.tf#L145) | Subnet IAM bindings in {REGION/NAME => {ROLE => [MEMBERS]} format. | <code>map&#40;map&#40;list&#40;string&#41;&#41;&#41;</code> |  | <code>&#123;&#125;</code> |
+| [subnet_iam_additive](variables.tf#L151) | Subnet IAM additive bindings in {REGION/NAME => {ROLE => [MEMBERS]}} format. | <code>map&#40;map&#40;list&#40;string&#41;&#41;&#41;</code> |  | <code>&#123;&#125;</code> |
+| [subnets](variables.tf#L158) | Subnet configuration. | <code title="list&#40;object&#40;&#123;&#10;  name                  &#61; string&#10;  ip_cidr_range         &#61; string&#10;  region                &#61; string&#10;  description           &#61; optional&#40;string&#41;&#10;  enable_private_access &#61; optional&#40;bool, true&#41;&#10;  flow_logs_config &#61; optional&#40;object&#40;&#123;&#10;    aggregation_interval &#61; optional&#40;string&#41;&#10;    filter_expression    &#61; optional&#40;string&#41;&#10;    flow_sampling        &#61; optional&#40;number&#41;&#10;    metadata             &#61; optional&#40;string&#41;&#10;    metadata_fields &#61; optional&#40;list&#40;string&#41;&#41;&#10;  &#125;&#41;&#41;&#10;  ipv6 &#61; optional&#40;object&#40;&#123;&#10;    access_type           &#61; optional&#40;string&#41;&#10;    enable_private_access &#61; optional&#40;bool, true&#41;&#10;  &#125;&#41;&#41;&#10;  secondary_ip_ranges &#61; optional&#40;map&#40;string&#41;&#41;&#10;&#125;&#41;&#41;">list&#40;object&#40;&#123;&#8230;&#125;&#41;&#41;</code> |  | <code>&#91;&#93;</code> |
+| [subnets_proxy_only](variables.tf#L183) | List of proxy-only subnets for Regional HTTPS  or Internal HTTPS load balancers. Note: Only one proxy-only subnet for each VPC network in each region can be active. | <code title="list&#40;object&#40;&#123;&#10;  name          &#61; string&#10;  ip_cidr_range &#61; string&#10;  region        &#61; string&#10;  description   &#61; optional&#40;string&#41;&#10;  active        &#61; bool&#10;&#125;&#41;&#41;">list&#40;object&#40;&#123;&#8230;&#125;&#41;&#41;</code> |  | <code>&#91;&#93;</code> |
+| [subnets_psc](variables.tf#L195) | List of subnets for Private Service Connect service producers. | <code title="list&#40;object&#40;&#123;&#10;  name          &#61; string&#10;  ip_cidr_range &#61; string&#10;  region        &#61; string&#10;  description   &#61; optional&#40;string&#41;&#10;&#125;&#41;&#41;">list&#40;object&#40;&#123;&#8230;&#125;&#41;&#41;</code> |  | <code>&#91;&#93;</code> |
+| [vpc_create](variables.tf#L206) | Create VPC. When set to false, uses a data source to reference existing VPC. | <code>bool</code> |  | <code>true</code> |
 
 ## Outputs
 
@@ -297,4 +497,3 @@ flow_logs:                        # enable, set to empty map to use defaults
 | [subnets_psc](outputs.tf#L112) | Private Service Connect subnet resources. |  |
 
 <!-- END TFDOC -->
-The key format is `subnet_region/subnet_name`. For example `europe-west1/my_subnet`.

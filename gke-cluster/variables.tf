@@ -1,5 +1,5 @@
 /**
- * Copyright 2022 Google LLC
+ * Copyright 2023 Google LLC
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,6 +13,22 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
+variable "backup_configs" {
+  description = "Configuration for Backup for GKE."
+  type = object({
+    enable_backup_agent = optional(bool, false)
+    backup_plans = optional(map(object({
+      region                            = string
+      schedule                          = string
+      retention_policy_days             = optional(string)
+      retention_policy_lock             = optional(bool, false)
+      retention_policy_delete_lock_days = optional(string)
+    })), {})
+  })
+  default  = {}
+  nullable = false
+}
 
 variable "cluster_autoscaling" {
   description = "Enable and configure limits for Node Auto-Provisioning with Cluster Autoscaler."
@@ -49,7 +65,6 @@ variable "enable_addons" {
     dns_cache                      = optional(bool, false)
     gce_persistent_disk_csi_driver = optional(bool, false)
     gcp_filestore_csi_driver       = optional(bool, false)
-    gke_backup_agent               = optional(bool, false)
     horizontal_pod_autoscaling     = optional(bool, false)
     http_load_balancing            = optional(bool, false)
     istio = optional(object({
@@ -70,7 +85,7 @@ variable "enable_features" {
   type = object({
     autopilot            = optional(bool, false)
     binary_authorization = optional(bool, false)
-    cloud_dns = optional(object({
+    dns = optional(object({
       provider = optional(string)
       scope    = optional(string)
       domain   = optional(string)
@@ -80,9 +95,11 @@ variable "enable_features" {
       key_name = string
     }))
     dataplane_v2         = optional(bool, false)
+    gateway_api          = optional(bool, false)
     groups_for_rbac      = optional(string)
     intranode_visibility = optional(bool, false)
     l4_ilb_subsetting    = optional(bool, false)
+    mesh_certificates    = optional(bool)
     pod_security_policy  = optional(bool, false)
     resource_usage_export = optional(object({
       dataset                              = string
@@ -95,7 +112,7 @@ variable "enable_features" {
       topic_id = optional(string)
     }))
     vertical_pod_autoscaling = optional(bool, false)
-    workload_identity        = optional(bool, false)
+    workload_identity        = optional(bool, true)
   })
   default = {
     workload_identity = true
@@ -205,6 +222,12 @@ variable "project_id" {
 variable "release_channel" {
   description = "Release channel for GKE upgrades."
   type        = string
+  default     = null
+}
+
+variable "tags" {
+  description = "Network tags applied to nodes."
+  type        = list(string)
   default     = null
 }
 

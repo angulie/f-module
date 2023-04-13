@@ -165,7 +165,10 @@ variable "health_check_config" {
     condition = (
       (try(var.health_check_config.grpc, null) == null ? 0 : 1) +
       (try(var.health_check_config.http, null) == null ? 0 : 1) +
-      (try(var.health_check_config.tcp, null) == null ? 0 : 1) <= 1
+      (try(var.health_check_config.http2, null) == null ? 0 : 1) +
+      (try(var.health_check_config.https, null) == null ? 0 : 1) +
+      (try(var.health_check_config.tcp, null) == null ? 0 : 1) +
+      (try(var.health_check_config.ssl, null) == null ? 0 : 1) <= 1
     )
     error_message = "Only one health check type can be configured at a time."
   }
@@ -197,13 +200,6 @@ variable "project_id" {
   type        = string
 }
 
-variable "stateful_disks" {
-  description = "Stateful disk configuration applied at the MIG level to all instances, in device name => on permanent instance delete rule as boolean."
-  type        = map(bool)
-  default     = {}
-  nullable    = false
-}
-
 variable "stateful_config" {
   description = "Stateful configuration for individual instances."
   type = map(object({
@@ -221,6 +217,13 @@ variable "stateful_config" {
   }))
   default  = {}
   nullable = false
+}
+
+variable "stateful_disks" {
+  description = "Stateful disk configuration applied at the MIG level to all instances, in device name => on permanent instance delete rule as boolean."
+  type        = map(bool)
+  default     = {}
+  nullable    = false
 }
 
 variable "target_pools" {

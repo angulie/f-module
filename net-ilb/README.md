@@ -12,6 +12,62 @@ One other issue is a `Provider produced inconsistent final plan` error which is 
 
 ## Examples
 
+### Reference existing MIGs
+
+This example shows how to reference existing Managed Infrastructure Groups (MIGs).
+
+```hcl
+module "instance_template" {
+  source                 = "./fabric/modules/compute-vm"
+  project_id             = var.project_id
+  create_template        = true
+  name                   = "vm-test"
+  service_account_create = true
+  zone                   = "europe-west1-b"
+
+  network_interfaces = [
+    {
+      network    = var.vpc.self_link
+      subnetwork = var.subnet.self_link
+    }
+  ]
+
+  tags = [
+    "http-server"
+  ]
+}
+
+module "mig" {
+  source            = "./fabric/modules/compute-mig"
+  project_id        = var.project_id
+  location          = "europe-west1"
+  name              = "mig-test"
+  target_size       = 1
+  instance_template = module.instance_template.template.self_link
+}
+
+module "ilb" {
+  source        = "./fabric/modules/net-ilb"
+  project_id    = var.project_id
+  region        = "europe-west1"
+  name          = "ilb-test"
+  service_label = "ilb-test"
+  vpc_config = {
+    network    = var.vpc.self_link
+    subnetwork = var.subnet.self_link
+  }
+  backends = [{
+    group = module.mig.group_manager.instance_group
+  }]
+  health_check_config = {
+    http = {
+      port = 80
+    }
+  }
+}
+# tftest modules=3 resources=6
+```
+
 ### Externally managed instances
 
 This examples shows how to create an ILB by combining externally managed instances (in a custom module or even outside of the current root module) in an unmanaged group. When using internally managed groups, remember to run `terraform apply` each time group instances change.
@@ -37,7 +93,7 @@ module "ilb" {
     }
   }
   backends = [{
-    group          = module.ilb.groups.my-group.self_link
+    group = module.ilb.groups.my-group.self_link
   }]
   health_check_config = {
     http = {
@@ -65,9 +121,9 @@ module "cos-nginx" {
 
 module "instance-group" {
   source     = "./fabric/modules/compute-vm"
-  for_each = toset(["b", "c"])
+  for_each   = toset(["b", "c"])
   project_id = var.project_id
-  zone     = "europe-west1-${each.key}"
+  zone       = "europe-west1-${each.key}"
   name       = "ilb-test-${each.key}"
   network_interfaces = [{
     network    = var.vpc.self_link
@@ -76,9 +132,11 @@ module "instance-group" {
     addresses  = null
   }]
   boot_disk = {
-    image = "projects/cos-cloud/global/images/family/cos-stable"
-    type  = "pd-ssd"
-    size  = 10
+    initialize_params = {
+      image = "projects/cos-cloud/global/images/family/cos-stable"
+      type  = "pd-ssd"
+      size  = 10
+    }
   }
   tags = ["http-server", "ssh"]
   metadata = {
@@ -96,8 +154,8 @@ module "ilb" {
   vpc_config = {
     network    = var.vpc.self_link
     subnetwork = var.subnet.self_link
-    }
-  ports         = [80]
+  }
+  ports = [80]
   backends = [
     for z, mod in module.instance-group : {
       group          = mod.group.self_link
@@ -146,8 +204,8 @@ module "ilb" {
 | [forwarding_rule_address](outputs.tf#L37) | Forwarding rule address. |  |
 | [forwarding_rule_id](outputs.tf#L42) | Forwarding rule id. |  |
 | [forwarding_rule_self_link](outputs.tf#L47) | Forwarding rule self link. |  |
-| [group_self_links](outputs.tf#L57) | Optional unmanaged instance group self links. |  |
-| [groups](outputs.tf#L52) | Optional unmanaged instance group resources. |  |
+| [group_self_links](outputs.tf#L52) | Optional unmanaged instance group self links. |  |
+| [groups](outputs.tf#L59) | Optional unmanaged instance group resources. |  |
 | [health_check](outputs.tf#L64) | Auto-created health-check resource. |  |
 | [health_check_self_id](outputs.tf#L69) | Auto-created health-check self id. |  |
 | [health_check_self_link](outputs.tf#L74) | Auto-created health-check self link. |  |

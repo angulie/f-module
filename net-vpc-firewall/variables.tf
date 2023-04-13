@@ -15,7 +15,7 @@
  */
 
 variable "default_rules_config" {
-  description = "Optionally created convenience rules. Set the variable or individual members to null to disable."
+  description = "Optionally created convenience rules. Set the 'disabled' attribute to true, or individual rule attributes to empty lists to disable."
   type = object({
     admin_ranges = optional(list(string))
     disabled     = optional(bool, false)
@@ -35,7 +35,7 @@ variable "default_rules_config" {
 }
 
 variable "egress_rules" {
-  description = "List of egress rule definitions, default to deny action."
+  description = "List of egress rule definitions, default to deny action. Null destination ranges will be replaced with 0/0."
   type = map(object({
     deny               = optional(bool, true)
     description        = optional(string)
@@ -45,30 +45,7 @@ variable "egress_rules" {
       include_metadata = optional(bool)
     }))
     priority             = optional(number, 1000)
-    sources              = optional(list(string))
-    targets              = optional(list(string))
-    use_service_accounts = optional(bool, false)
-    rules = optional(list(object({
-      protocol = string
-      ports    = optional(list(string))
-    })), [{ protocol = "all" }])
-  }))
-  default  = {}
-  nullable = false
-}
-
-variable "ingress_rules" {
-  description = "List of ingress rule definitions, default to allow action."
-  type = map(object({
-    deny        = optional(bool, false)
-    description = optional(string)
-    disabled    = optional(bool, false)
-    enable_logging = optional(object({
-      include_metadata = optional(bool)
-    }))
-    priority             = optional(number, 1000)
     source_ranges        = optional(list(string))
-    sources              = optional(list(string))
     targets              = optional(list(string))
     use_service_accounts = optional(bool, false)
     rules = optional(list(object({
@@ -87,6 +64,30 @@ variable "factories_config" {
     rules_folder  = string
   })
   default = null
+}
+
+variable "ingress_rules" {
+  description = "List of ingress rule definitions, default to allow action. Null source ranges will be replaced with 0/0."
+  type = map(object({
+    deny               = optional(bool, false)
+    description        = optional(string)
+    destination_ranges = optional(list(string), []) # empty list is needed as default to allow deletion after initial creation with a value. See https://github.com/hashicorp/terraform-provider-google/issues/14270
+    disabled           = optional(bool, false)
+    enable_logging = optional(object({
+      include_metadata = optional(bool)
+    }))
+    priority             = optional(number, 1000)
+    source_ranges        = optional(list(string))
+    sources              = optional(list(string))
+    targets              = optional(list(string))
+    use_service_accounts = optional(bool, false)
+    rules = optional(list(object({
+      protocol = string
+      ports    = optional(list(string))
+    })), [{ protocol = "all" }])
+  }))
+  default  = {}
+  nullable = false
 }
 
 variable "named_ranges" {

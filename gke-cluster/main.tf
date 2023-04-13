@@ -1,5 +1,5 @@
 /**
- * Copyright 2022 Google LLC
+ * Copyright 2023 Google LLC
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,6 +15,12 @@
  */
 
 resource "google_container_cluster" "cluster" {
+  lifecycle {
+    ignore_changes = [
+      node_config[0].boot_disk_kms_key,
+      node_config[0].spot
+    ]
+  }
   provider    = google-beta
   project     = var.project_id
   name        = var.name
@@ -48,7 +54,22 @@ resource "google_container_cluster" "cluster" {
   enable_autopilot = var.enable_features.autopilot ? true : null
 
   # the default nodepool is deleted here, use the gke-nodepool module instead
-  # node_config {}
+  # default nodepool configuration based on a shielded_nodes variable
+  dynamic "node_config" {
+    for_each = var.enable_features.autopilot ? [] : [""]
+    content {
+      dynamic "shielded_instance_config" {
+        for_each = var.enable_features.shielded_nodes ? [""] : []
+        content {
+          enable_secure_boot          = true
+          enable_integrity_monitoring = true
+        }
+      }
+      tags = var.tags
+    }
+  }
+
+
 
   addons_config {
     dynamic "dns_cache_config" {
@@ -98,7 +119,7 @@ resource "google_container_cluster" "cluster" {
       enabled = var.enable_addons.config_connector
     }
     gke_backup_agent_config {
-      enabled = var.enable_addons.gke_backup_agent
+      enabled = var.backup_configs.enable_backup_agent
     }
   }
 
@@ -119,7 +140,17 @@ resource "google_container_cluster" "cluster" {
   dynamic "cluster_autoscaling" {
     for_each = var.cluster_autoscaling == null ? [] : [""]
     content {
-      enabled = true
+      enabled = var.enable_features.autopilot ? null : true
+
+      dynamic "auto_provisioning_defaults" {
+        for_each = var.cluster_autoscaling.auto_provisioning_defaults != null ? [""] : []
+        content {
+          boot_disk_kms_key = var.cluster_autoscaling.auto_provisioning_defaults.boot_disk_kms_key
+          image_type        = var.cluster_autoscaling.auto_provisioning_defaults.image_type
+          oauth_scopes      = var.cluster_autoscaling.auto_provisioning_defaults.oauth_scopes
+          service_account   = var.cluster_autoscaling.auto_provisioning_defaults.service_account
+        }
+      }
       dynamic "resource_limits" {
         for_each = var.cluster_autoscaling.cpu_limits != null ? [""] : []
         content {
@@ -131,7 +162,7 @@ resource "google_container_cluster" "cluster" {
       dynamic "resource_limits" {
         for_each = var.cluster_autoscaling.mem_limits != null ? [""] : []
         content {
-          resource_type = "cpu"
+          resource_type = "memory"
           minimum       = var.cluster_autoscaling.mem_limits.min
           maximum       = var.cluster_autoscaling.mem_limits.max
         }
@@ -149,11 +180,11 @@ resource "google_container_cluster" "cluster" {
   }
 
   dynamic "dns_config" {
-    for_each = var.enable_features.cloud_dns != null ? [""] : []
+    for_each = var.enable_features.dns != null ? [""] : []
     content {
-      cluster_dns        = enable_features.cloud_dns.cluster_dns
-      cluster_dns_scope  = enable_features.cloud_dns.cluster_dns_scope
-      cluster_dns_domain = enable_features.cloud_dns.cluster_dns_domain
+      cluster_dns        = var.enable_features.dns.provider
+      cluster_dns_scope  = var.enable_features.dns.scope
+      cluster_dns_domain = var.enable_features.dns.domain
     }
   }
 
@@ -176,6 +207,13 @@ resource "google_container_cluster" "cluster" {
     for_each = var.logging_config != null && !var.enable_features.autopilot ? [""] : []
     content {
       enable_components = var.logging_config
+    }
+  }
+
+  dynamic "gateway_api_config" {
+    for_each = var.enable_features.gateway_api ? [""] : []
+    content {
+      channel = "CHANNEL_STANDARD"
     }
   }
 
@@ -234,6 +272,13 @@ resource "google_container_cluster" "cluster" {
           display_name = range.key
         }
       }
+    }
+  }
+
+  dynamic "mesh_certificates" {
+    for_each = var.enable_features.mesh_certificates != null ? [""] : []
+    content {
+      enable_certificates = var.enable_features.mesh_certificates
     }
   }
 
@@ -334,12 +379,35 @@ resource "google_container_cluster" "cluster" {
   }
 
   dynamic "workload_identity_config" {
-    for_each = var.enable_features.workload_identity ? [""] : []
+    for_each = (var.enable_features.workload_identity && !var.enable_features.autopilot) ? [""] : []
     content {
       workload_pool = "${var.project_id}.svc.id.goog"
     }
   }
 }
+
+resource "google_gke_backup_backup_plan" "backup_plan" {
+  for_each = var.backup_configs.enable_backup_agent ? var.backup_configs.backup_plans : {}
+  name     = each.key
+  cluster  = google_container_cluster.cluster.id
+  location = each.value.region
+  project  = var.project_id
+  retention_policy {
+    backup_delete_lock_days = try(each.value.retention_policy_delete_lock_days)
+    backup_retain_days      = try(each.value.retention_policy_days)
+    locked                  = try(each.value.retention_policy_lock)
+  }
+  backup_schedule {
+    cron_schedule = each.value.schedule
+  }
+  #TODO add support for configs
+  backup_config {
+    include_volume_data = true
+    include_secrets     = true
+    all_namespaces      = true
+  }
+}
+
 
 resource "google_compute_network_peering_routes_config" "gke_master" {
   count = (
@@ -361,9 +429,11 @@ resource "google_compute_network_peering_routes_config" "gke_master" {
 
 resource "google_pubsub_topic" "notifications" {
   count = (
-    try(var.enable_features.upgrade_notifications.topic_id, null) == null ? 0 : 1
+    try(var.enable_features.upgrade_notifications, null) != null &&
+    try(var.enable_features.upgrade_notifications.topic_id, null) == null ? 1 : 0
   )
-  name = "gke-pubsub-notifications"
+  project = var.project_id
+  name    = "gke-pubsub-notifications"
   labels = {
     content = "gke-notifications"
   }

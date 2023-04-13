@@ -1,5 +1,5 @@
 /**
- * Copyright 2022 Google LLC
+ * Copyright 2023 Google LLC
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,55 +24,33 @@ locals {
     ]
     "dataflow" : ["dataflow", "compute"]
   }
-  _service_accounts_robot_services = {
-    artifactregistry  = "service-%s@gcp-sa-artifactregistry"
-    bq                = "bq-%s@bigquery-encryption"
-    cloudasset        = "service-%s@gcp-sa-cloudasset"
-    cloudbuild        = "service-%s@gcp-sa-cloudbuild"
-    cloudfunctions    = "service-%s@gcf-admin-robot"
-    cloudrun          = "service-%s@serverless-robot-prod"
-    composer          = "service-%s@cloudcomposer-accounts"
-    compute           = "service-%s@compute-system"
-    container-engine  = "service-%s@container-engine-robot"
-    containerregistry = "service-%s@containerregistry"
-    dataflow          = "service-%s@dataflow-service-producer-prod"
-    dataproc          = "service-%s@dataproc-accounts"
-    fleet             = "service-%s@gcp-sa-gkehub"
-    gae-flex          = "service-%s@gae-api-prod"
-    # TODO: deprecate gcf
-    gcf = "service-%s@gcf-admin-robot"
-    # TODO: jit?
-    gke-mcs                  = "service-%s@gcp-sa-mcsd"
-    monitoring-notifications = "service-%s@gcp-sa-monitoring-notification"
-    pubsub                   = "service-%s@gcp-sa-pubsub"
-    secretmanager            = "service-%s@gcp-sa-secretmanager"
-    sql                      = "service-%s@gcp-sa-cloud-sql"
-    sqladmin                 = "service-%s@gcp-sa-cloud-sql"
-    storage                  = "service-%s@gs-project-accounts"
-  }
+  _service_agents_data = yamldecode(file("${path.module}/service-agents.yaml"))
   service_accounts_default = {
-    compute = "${local.project.number}-compute@developer.gserviceaccount.com"
-    gae     = "${local.project.project_id}@appspot.gserviceaccount.com"
+    compute      = "${local.project.number}-compute@developer.gserviceaccount.com"
+    gae          = "${local.project.project_id}@appspot.gserviceaccount.com"
+    workstations = "service-${local.project.number}@gcp-sa-workstationsvm.iam.gserviceaccount.com"
   }
   service_account_cloud_services = (
     "${local.project.number}@cloudservices.gserviceaccount.com"
   )
   service_accounts_robots = merge(
     {
-      for k, v in local._service_accounts_robot_services :
-      k => "${format(v, local.project.number)}.iam.gserviceaccount.com"
+      for agent in local._service_agents_data :
+      agent.name => format(agent.service_agent, local.project.number)
+    },
+    {
+      for agent in local._service_agents_data :
+      agent.alias => format(agent.service_agent, local.project.number)
+      if lookup(agent, "alias", null) != null
     },
     {
       gke-mcs-importer = "${local.project.project_id}.svc.id.goog[gke-mcs/gke-mcs-importer]"
     }
   )
   service_accounts_jit_services = [
-    "artifactregistry.googleapis.com",
-    "cloudasset.googleapis.com",
-    "gkehub.googleapis.com",
-    "pubsub.googleapis.com",
-    "secretmanager.googleapis.com",
-    "sqladmin.googleapis.com"
+    for agent in local._service_agents_data :
+    "${agent.name}.googleapis.com"
+    if lookup(agent, "jit", false)
   ]
   service_accounts_cmek_service_keys = distinct(flatten([
     for s in keys(var.service_encryption_key_ids) : [

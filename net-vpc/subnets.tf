@@ -22,8 +22,8 @@ locals {
     trimsuffix(basename(f), ".yaml") => yamldecode(file("${var.data_folder}/${f}"))
   }
   _factory_subnets = {
-    for k, v in local._factory_data : "${v.region}/${k}" => {
-      name                  = k
+    for k, v in local._factory_data : "${v.region}/${try(v.name, k)}" => {
+      name                  = try(v.name, k)
       ip_cidr_range         = v.ip_cidr_range
       region                = v.region
       description           = try(v.description, null)
@@ -31,19 +31,39 @@ locals {
       flow_logs_config      = try(v.flow_logs, null)
       ipv6                  = try(v.ipv6, null)
       secondary_ip_ranges   = try(v.secondary_ip_ranges, null)
+      iam                   = try(v.iam, [])
+      iam_additive          = try(v.iam_additive, [])
+      purpose               = try(v.purpose, null)
+      active                = try(v.active, null)
     }
   }
+  _factory_subnets_iam_additive = flatten([
+    for k, v in local._factory_subnets : [
+      for member in lookup(v, "iam_additive", []) : {
+        member = member
+        subnet = k
+        role   = "roles/compute.networkUser"
+      }
+    ] if v.purpose == null
+  ])
   _factory_subnets_iam = [
     for k, v in local._factory_subnets : {
-      subnet = k
-      role   = "roles/compute.networkUser"
-      members = concat(
-        formatlist("group:%s", lookup(v, "iam_groups", [])),
-        formatlist("user:%s", lookup(v, "iam_users", [])),
-        formatlist("serviceAccount:%s", lookup(v, "iam_service_accounts", []))
-      )
-    }
+      subnet  = k
+      role    = "roles/compute.networkUser"
+      members = v.iam
+    } if v.purpose == null && v.iam != null
   ]
+  _subnet_iam_additive_members = flatten([
+    for subnet, roles in var.subnet_iam_additive : [
+      for role, members in roles : [
+        for member in members : {
+          member = member
+          role   = role
+          subnet = subnet
+        }
+      ]
+    ]
+  ])
   _subnet_iam_members = flatten([
     for subnet, roles in(var.subnet_iam == null ? {} : var.subnet_iam) : [
       for role, members in roles : {
@@ -53,22 +73,26 @@ locals {
       }
     ]
   ])
+  subnet_iam_additive_members = concat(
+    local._factory_subnets_iam_additive,
+    local._subnet_iam_additive_members
+  )
   subnet_iam_members = concat(
     [for k in local._factory_subnets_iam : k if length(k.members) > 0],
     local._subnet_iam_members
   )
   subnets = merge(
-    { for subnet in var.subnets : "${subnet.region}/${subnet.name}" => subnet },
-    local._factory_subnets
+    { for s in var.subnets : "${s.region}/${s.name}" => s },
+    { for k, v in local._factory_subnets : k => v if v.purpose == null }
   )
-  subnets_proxy_only = {
-    for subnet in var.subnets_proxy_only :
-    "${subnet.region}/${subnet.name}" => subnet
-  }
-  subnets_psc = {
-    for subnet in var.subnets_psc :
-    "${subnet.region}/${subnet.name}" => subnet
-  }
+  subnets_proxy_only = merge(
+    { for s in var.subnets_proxy_only : "${s.region}/${s.name}" => s },
+    { for k, v in local._factory_subnets : k => v if v.purpose == "REGIONAL_MANAGED_PROXY" }
+  )
+  subnets_psc = merge(
+    { for s in var.subnets_psc : "${s.region}/${s.name}" => s },
+    { for k, v in local._factory_subnets : k => v if v.purpose == "PRIVATE_SERVICE_CONNECT" }
+  )
 }
 
 resource "google_compute_subnetwork" "subnetwork" {
@@ -117,9 +141,7 @@ resource "google_compute_subnetwork" "proxy_only" {
     : each.value.description
   )
   purpose = "REGIONAL_MANAGED_PROXY"
-  role = (
-    each.value.active || each.value.active == null ? "ACTIVE" : "BACKUP"
-  )
+  role    = each.value.active != false ? "ACTIVE" : "BACKUP"
 }
 
 resource "google_compute_subnetwork" "psc" {
@@ -147,4 +169,16 @@ resource "google_compute_subnetwork_iam_binding" "binding" {
   region     = google_compute_subnetwork.subnetwork[each.value.subnet].region
   role       = each.value.role
   members    = each.value.members
+}
+
+resource "google_compute_subnetwork_iam_member" "binding" {
+  for_each = {
+    for binding in local.subnet_iam_additive_members :
+    "${binding.subnet}.${binding.role}.${binding.member}" => binding
+  }
+  project    = var.project_id
+  subnetwork = google_compute_subnetwork.subnetwork[each.value.subnet].name
+  region     = google_compute_subnetwork.subnetwork[each.value.subnet].region
+  role       = each.value.role
+  member     = each.value.member
 }

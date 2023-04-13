@@ -1,5 +1,5 @@
 /**
- * Copyright 2022 Google LLC
+ * Copyright 2023 Google LLC
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -66,13 +66,14 @@ locals {
 }
 
 resource "google_dns_managed_zone" "non-public" {
-  count       = (var.zone_create && var.type != "public") ? 1 : 0
-  provider    = google-beta
-  project     = var.project_id
-  name        = var.name
-  dns_name    = var.domain
-  description = var.description
-  visibility  = "private"
+  count          = (var.zone_create && var.type != "public") ? 1 : 0
+  provider       = google-beta
+  project        = var.project_id
+  name           = var.name
+  dns_name       = var.domain
+  description    = var.description
+  visibility     = "private"
+  reverse_lookup = (var.type == "reverse-managed")
 
   dynamic "forwarding_config" {
     for_each = (

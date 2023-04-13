@@ -1,5 +1,5 @@
 /**
- * Copyright 2022 Google LLC
+ * Copyright 2023 Google LLC
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -34,14 +34,15 @@ data "google_compute_network" "network" {
 }
 
 resource "google_compute_network" "network" {
-  count                           = var.vpc_create ? 1 : 0
-  project                         = var.project_id
-  name                            = var.name
-  description                     = var.description
-  auto_create_subnetworks         = var.auto_create_subnetworks
-  delete_default_routes_on_create = var.delete_default_routes_on_create
-  mtu                             = var.mtu
-  routing_mode                    = var.routing_mode
+  count                                     = var.vpc_create ? 1 : 0
+  project                                   = var.project_id
+  name                                      = var.name
+  description                               = var.description
+  auto_create_subnetworks                   = var.auto_create_subnetworks
+  delete_default_routes_on_create           = var.delete_default_routes_on_create
+  mtu                                       = var.mtu
+  routing_mode                              = var.routing_mode
+  network_firewall_policy_enforcement_order = var.firewall_policy_enforcement_order
 }
 
 resource "google_compute_network_peering" "local" {
@@ -109,7 +110,7 @@ resource "google_dns_policy" "default" {
         )
         iterator = ns
         content {
-          ipv4_address    = ns.key
+          ipv4_address    = ns.value
           forwarding_path = "private"
         }
       }
@@ -121,7 +122,7 @@ resource "google_dns_policy" "default" {
         )
         iterator = ns
         content {
-          ipv4_address = ns.key
+          ipv4_address = ns.value
         }
       }
     }

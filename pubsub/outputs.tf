@@ -16,10 +16,21 @@
 
 output "id" {
   description = "Topic id."
-  value       = google_pubsub_topic.default.id
+  value       = local.topic_id_static
   depends_on = [
+    google_pubsub_topic.default,
     google_pubsub_topic_iam_binding.default
   ]
+}
+
+output "schema" {
+  description = "Schema resource."
+  value       = try(google_pubsub_schema.default[0], null)
+}
+
+output "schema_id" {
+  description = "Schema resource id."
+  value       = try(google_pubsub_schema.default[0].id, null)
 }
 
 output "subscription_id" {

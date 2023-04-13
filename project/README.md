@@ -2,6 +2,23 @@
 
 This module implements the creation and management of one GCP project including IAM, organization policies, Shared VPC host or service attachment, service API activation, and tag attachment. It also offers a convenient way to refer to managed service identities (aka robot service accounts) for APIs.
 
+# Basic Project Creation
+
+```hcl
+module "project" {
+  source          = "./fabric/modules/project"
+  billing_account = "123456-123456-123456"
+  name            = "myproject"
+  parent          = "folders/1234567890"
+  prefix          = "foo"
+  services = [
+    "container.googleapis.com",
+    "stackdriver.googleapis.com"
+  ]
+}
+# tftest modules=1 resources=3 inventory=basic.yaml
+```
+
 ## IAM Examples
 
 IAM is managed via several variables that implement different levels of control:
@@ -26,7 +43,7 @@ module "project" {
   name            = "project-example"
   parent          = "folders/1234567890"
   prefix          = "foo"
-  services        = [
+  services = [
     "container.googleapis.com",
     "stackdriver.googleapis.com"
   ]
@@ -36,7 +53,7 @@ module "project" {
     ]
   }
 }
-# tftest modules=1 resources=4
+# tftest modules=1 resources=4 inventory=iam-authoritative.yaml
 ```
 
 The `group_iam` variable uses group email addresses as keys and is a convenient way to assign roles to humans following Google's best practices. The end result is readable code that also serves as documentation.
@@ -48,10 +65,6 @@ module "project" {
   name            = "project-example"
   parent          = "folders/1234567890"
   prefix          = "foo"
-  services        = [
-    "container.googleapis.com",
-    "stackdriver.googleapis.com"
-  ]
   group_iam = {
     "gcp-security-admins@example.com" = [
       "roles/cloudasset.owner",
@@ -61,7 +74,7 @@ module "project" {
     ]
   }
 }
-# tftest modules=1 resources=7
+# tftest modules=1 resources=5 inventory=iam-group.yaml
 ```
 
 ### Additive IAM
@@ -70,22 +83,37 @@ Additive IAM is typically used where bindings for specific roles are controlled 
 
 ```hcl
 module "project" {
-  source          = "./fabric/modules/project"
-  name            = "project-example"
+  source = "./fabric/modules/project"
+  name   = "project-example"
   iam_additive = {
-    "roles/viewer"               = [
+    "roles/viewer" = [
       "group:one@example.org",
       "group:two@xample.org"
     ],
-    "roles/storage.objectAdmin"  = [
+    "roles/storage.objectAdmin" = [
       "group:two@example.org"
     ],
-    "roles/owner"                = [
+    "roles/owner" = [
       "group:three@example.org"
     ],
   }
 }
-# tftest modules=1 resources=5
+# tftest modules=1 resources=5 inventory=iam-additive.yaml
+```
+
+### Additive IAM by members
+
+```hcl
+module "project" {
+  source = "./fabric/modules/project"
+  name   = "project-example"
+  iam_additive_members = {
+    "user:one@example.org" = ["roles/owner"]
+    "user:two@example.org" = ["roles/owner", "roles/editor"]
+  }
+
+}
+# tftest modules=1 resources=4 inventory=iam-additive-members.yaml
 ```
 
 ### Service Identities and authoritative IAM
@@ -94,15 +122,15 @@ As mentioned above, there are cases where authoritative management of specific I
 
 ```hcl
 module "project" {
-  source          = "./fabric/modules/project"
-  name            = "project-example"
+  source = "./fabric/modules/project"
+  name   = "project-example"
   group_iam = {
     "foo@example.com" = [
       "roles/editor"
     ]
   }
   iam = {
-    "roles/editor" = [      
+    "roles/editor" = [
       "serviceAccount:${module.project.service_accounts.cloud_services}"
     ]
   }
@@ -110,39 +138,88 @@ module "project" {
 # tftest modules=1 resources=2
 ```
 
-## Shared VPC service
-
-The module allows managing Shared VPC status for both hosts and service projects, and includes a simple way of assigning Shared VPC roles to service identities.
-
-### Host project
-
-You can enable Shared VPC Host at the project level and manage project service association independently.
+### Using shortcodes for Service Identities in additive IAM
+Most Service Identities contains project number in their e-mail address and this prevents additive IAM to work, as these values are not known at moment of execution of `terraform plan` (its not an issue for authoritative IAM). To refer current project Service Identities you may use shortcodes for Service Identities similarly as for `service_identity_iam` when configuring Shared VPC.
 
 ```hcl
 module "project" {
-  source          = "./fabric/modules/project"
-  name            = "project-example"
-  shared_vpc_host_config = {
-    enabled = true
+  source = "./fabric/modules/project"
+  name   = "project-example"
+
+  services = [
+    "run.googleapis.com",
+    "container.googleapis.com",
+  ]
+
+  iam_additive = {
+    "roles/editor"                         = ["cloudservices"]
+    "roles/vpcaccess.user"                 = ["cloudrun"]
+    "roles/container.hostServiceAgentUser" = ["container-engine"]
+  }
+}
+# tftest modules=1 resources=6
+```
+
+
+### Service identities requiring manual IAM grants
+
+The module will create service identities at project creation instead of creating of them at the time of first use. This allows granting these service identities roles in other projects, something which is usually necessary in a Shared VPC context.  
+
+You can grant roles to service identities using the following construct:
+
+```hcl
+module "project" {
+  source = "./fabric/modules/project"
+  name   = "project-example"
+  iam = {
+    "roles/apigee.serviceAgent" = [
+      "serviceAccount:${module.project.service_accounts.robots.apigee}"
+    ]
   }
 }
 # tftest modules=1 resources=2
 ```
 
-### Service project
+This table lists all affected services and roles that you need to grant to service identities
+
+| service | service identity | role |
+|---|---|---|
+| apigee.googleapis.com | apigee | roles/apigee.serviceAgent |
+| artifactregistry.googleapis.com | artifactregistry | roles/artifactregistry.serviceAgent |
+| cloudasset.googleapis.com | cloudasset | roles/cloudasset.serviceAgent |
+| cloudbuild.googleapis.com | cloudbuild | roles/cloudbuild.builds.builder |
+| gkehub.googleapis.com | fleet | roles/gkehub.serviceAgent |
+| meshconfig.googleapis.com | servicemesh | roles/anthosservicemesh.serviceAgent |
+| multiclusteringress.googleapis.com | multicluster-ingress | roles/multiclusteringress.serviceAgent |
+| pubsub.googleapis.com | pubsub | roles/pubsub.serviceAgent |
+| sqladmin.googleapis.com | sqladmin | roles/cloudsql.serviceAgent |
+
+
+## Shared VPC
+
+The module allows managing Shared VPC status for both hosts and service projects, and includes a simple way of assigning Shared VPC roles to service identities.
+
+You can enable Shared VPC Host at the project level and manage project service association independently.
 
 ```hcl
-module "project" {
-  source          = "./fabric/modules/project"
-  name            = "project-example"
+module "host-project" {
+  source = "./fabric/modules/project"
+  name   = "my-host-project"
+  shared_vpc_host_config = {
+    enabled = true
+  }
+}
+
+module "service-project" {
+  source = "./fabric/modules/project"
+  name   = "my-service-project"
   shared_vpc_service_config = {
-    attach               = true
-    host_project         = "my-host-project"
+    host_project = module.host-project.project_id
     service_identity_iam = {
-      "roles/compute.networkUser"            = [
+      "roles/compute.networkUser" = [
         "cloudservices", "container-engine"
       ]
-      "roles/vpcaccess.user"                 = [
+      "roles/vpcaccess.user" = [
         "cloudrun"
       ]
       "roles/container.hostServiceAgentUser" = [
@@ -151,7 +228,7 @@ module "project" {
     }
   }
 }
-# tftest modules=1 resources=6
+# tftest modules=2 resources=8 inventory=shared-vpc.yaml
 ```
 
 ## Organization policies
@@ -165,50 +242,52 @@ module "project" {
   name            = "project-example"
   parent          = "folders/1234567890"
   prefix          = "foo"
-  services        = [
-    "container.googleapis.com",
-    "stackdriver.googleapis.com"
-  ]
   org_policies = {
     "compute.disableGuestAttributesAccess" = {
-      enforce = true
+      rules = [{ enforce = true }]
     }
-    "constraints/compute.skipDefaultNetworkCreation" = {
-      enforce = true
+    "compute.skipDefaultNetworkCreation" = {
+      rules = [{ enforce = true }]
     }
     "iam.disableServiceAccountKeyCreation" = {
-      enforce = true
+      rules = [{ enforce = true }]
     }
     "iam.disableServiceAccountKeyUpload" = {
-      enforce = false
       rules = [
         {
           condition = {
-            expression  = "resource.matchTagId(\"tagKeys/1234\", \"tagValues/1234\")"
+            expression  = "resource.matchTagId('tagKeys/1234', 'tagValues/1234')"
             title       = "condition"
             description = "test condition"
             location    = "somewhere"
           }
           enforce = true
+        },
+        {
+          enforce = false
         }
       ]
     }
-    "constraints/iam.allowedPolicyMemberDomains" = {
-      allow = {
-        values = ["C0xxxxxxx", "C0yyyyyyy"]
-      }
+    "iam.allowedPolicyMemberDomains" = {
+      rules = [{
+        allow = {
+          values = ["C0xxxxxxx", "C0yyyyyyy"]
+        }
+      }]
     }
-    "constraints/compute.trustedImageProjects" = {
-      allow = {
-        values = ["projects/my-project"]
-      }
+    "compute.trustedImageProjects" = {
+      rules = [{
+        allow = {
+          values = ["projects/my-project"]
+        }
+      }]
     }
-    "constraints/compute.vmExternalIpAccess" = {
-      deny = { all = true }
+    "compute.vmExternalIpAccess" = {
+      rules = [{ deny = { all = true } }]
     }
   }
 }
-# tftest modules=1 resources=10
+# tftest modules=1 resources=8 inventory=org-policies.yaml
 ```
 
 ### Organization policy factory
@@ -220,59 +299,56 @@ Note that contraints defined via `org_policies` take precedence over those in `o
 The example below deploys a few organization policies split between two YAML files.
 
 ```hcl
-module "folder" {
-  source                 = "./fabric/modules/folder"
-  parent                 = "organizations/1234567890"
-  name                   = "Folder name"
-  org_policies_data_path = "/my/path"
+module "project" {
+  source                 = "./fabric/modules/project"
+  billing_account        = "123456-123456-123456"
+  name                   = "project-example"
+  parent                 = "folders/1234567890"
+  prefix                 = "foo"
+  org_policies_data_path = "configs/org-policies/"
 }
-# tftest skip
+# tftest modules=1 resources=8 files=boolean,list inventory=org-policies.yaml
 ```
 
 ```yaml
-# /my/path/boolean.yaml
-iam.disableServiceAccountKeyCreation:
-  enforce: true
-
-iam.disableServiceAccountKeyUpload:
-  enforce: false
+# tftest-file id=boolean path=configs/org-policies/boolean.yaml
+compute.disableGuestAttributesAccess:
   rules:
-    - condition:
-        expression: resource.matchTagId("tagKeys/1234", "tagValues/1234")
-        title: condition
-        description: test condition
-        location: xxx
-      enforce: true
+  - enforce: true
+compute.skipDefaultNetworkCreation:
+  rules:
+  - enforce: true
+iam.disableServiceAccountKeyCreation:
+  rules:
+  - enforce: true
+iam.disableServiceAccountKeyUpload:
+  rules:
+  - condition:
+      description: test condition
+      expression: resource.matchTagId('tagKeys/1234', 'tagValues/1234')
+      location: somewhere
+      title: condition
+    enforce: true
+  - enforce: false
 ```
 
 ```yaml
-# /my/path/list.yaml
+# tftest-file id=list path=configs/org-policies/list.yaml
+compute.trustedImageProjects:
+  rules:
+  - allow:
+      values:
+      - projects/my-project
 compute.vmExternalIpAccess:
-  deny:
-    all: true
-
+  rules:
+  - deny:
+      all: true
 iam.allowedPolicyMemberDomains:
-  allow:
-    values:
+  rules:
+  - allow:
+      values:
       - C0xxxxxxx
       - C0yyyyyyy
-
-compute.restrictLoadBalancerCreationForTypes:
-  deny:
-    values: ["in:EXTERNAL"]
-  rules:
-    - condition:
-        expression: resource.matchTagId("tagKeys/1234", "tagValues/1234")
-        title: condition
-        description: test condition
-      allow:
-        values: ["in:EXTERNAL"]
-    - condition:
-        expression: resource.matchTagId("tagKeys/12345", "tagValues/12345")
-        title: condition2
-        description: test condition2
-      allow:
-        all: true
 ```
 
 
@@ -312,45 +388,34 @@ module "project-host" {
   parent          = "folders/1234567890"
   logging_sinks = {
     warnings = {
-      type          = "storage"
-      destination   = module.gcs.id
-      filter        = "severity=WARNING"
-      iam           = false
-      unique_writer = false
-      exclusions    = {}
+      destination = module.gcs.id
+      filter      = "severity=WARNING"
+      type        = "storage"
     }
     info = {
-      type          = "bigquery"
-      destination   = module.dataset.id
-      filter        = "severity=INFO"
-      iam           = false
-      unique_writer = false
-      exclusions    = {}
+      destination = module.dataset.id
+      filter      = "severity=INFO"
+      type        = "bigquery"
     }
     notice = {
-      type          = "pubsub"
-      destination   = module.pubsub.id
-      filter        = "severity=NOTICE"
-      iam           = true
-      unique_writer = false
-      exclusions    = {}
+      destination = module.pubsub.id
+      filter      = "severity=NOTICE"
+      type        = "pubsub"
     }
     debug = {
-      type          = "logging"
-      destination   = module.bucket.id
-      filter        = "severity=DEBUG"
-      iam           = true
-      unique_writer = false
+      destination = module.bucket.id
+      filter      = "severity=DEBUG"
       exclusions = {
         no-compute = "logName:compute"
       }
+      type = "logging"
     }
   }
   logging_exclusions = {
     no-gce-instances = "resource.type=gce_instance"
   }
 }
-# tftest modules=5 resources=12
+# tftest modules=5 resources=14 inventory=logging.yaml
 ```
 
 ## Cloud KMS encryption keys
@@ -359,10 +424,9 @@ The module offers a simple, centralized way to assign `roles/cloudkms.cryptoKeyE
 
 ```hcl
 module "project" {
-  source          = "./fabric/modules/project"
-  name            = "my-project"
-  billing_account = "123456-123456-123456"
-  prefix          = "foo"
+  source = "./fabric/modules/project"
+  name   = "my-project"
+  prefix = "foo"
   services = [
     "compute.googleapis.com",
     "storage.googleapis.com"
@@ -390,8 +454,8 @@ module "org" {
   organization_id = var.organization_id
   tags = {
     environment = {
-      description  = "Environment specification."
-      iam          = null
+      description = "Environment specification."
+      iam         = null
       values = {
         dev  = null
         prod = null
@@ -419,8 +483,8 @@ One non-obvious output is `service_accounts`, which offers a simple way to disco
 
 ```hcl
 module "project" {
-  source   = "./fabric/modules/project"
-  name     = "project-example"
+  source = "./fabric/modules/project"
+  name   = "project-example"
   services = [
     "compute.googleapis.com"
   ]
@@ -429,7 +493,7 @@ module "project" {
 output "compute_robot" {
   value = module.project.service_accounts.robots.compute
 }
-# tftest modules=1 resources=2
+# tftest modules=1 resources=2 inventory:outputs.yaml
 ```
 
 <!-- TFDOC OPTS files:1 -->
@@ -455,7 +519,7 @@ output "compute_robot" {
 
 | name | description | type | required | default |
 |---|---|:---:|:---:|:---:|
-| [name](variables.tf#L131) | Project name and id suffix. | <code>string</code> | ✓ |  |
+| [name](variables.tf#L140) | Project name and id suffix. | <code>string</code> | ✓ |  |
 | [auto_create_network](variables.tf#L17) | Whether to create the default network for the project. | <code>bool</code> |  | <code>false</code> |
 | [billing_account](variables.tf#L23) | Billing account id. | <code>string</code> |  | <code>null</code> |
 | [contacts](variables.tf#L29) | List of essential contacts for this resource. Must be in the form EMAIL -> [NOTIFICATION_TYPES]. Valid notification types are ALL, SUSPENSION, SECURITY, TECHNICAL, BILLING, LEGAL, PRODUCT_UPDATES. | <code>map&#40;list&#40;string&#41;&#41;</code> |  | <code>&#123;&#125;</code> |
@@ -469,15 +533,15 @@ output "compute_robot" {
 | [labels](variables.tf#L82) | Resource labels. | <code>map&#40;string&#41;</code> |  | <code>&#123;&#125;</code> |
 | [lien_reason](variables.tf#L89) | If non-empty, creates a project lien with this description. | <code>string</code> |  | <code>&#34;&#34;</code> |
 | [logging_exclusions](variables.tf#L95) | Logging exclusions for this project in the form {NAME -> FILTER}. | <code>map&#40;string&#41;</code> |  | <code>&#123;&#125;</code> |
-| [logging_sinks](variables.tf#L102) | Logging sinks to create for this project. | <code title="map&#40;object&#40;&#123;&#10;  destination   &#61; string&#10;  type          &#61; string&#10;  filter        &#61; string&#10;  iam           &#61; bool&#10;  unique_writer &#61; bool&#10;  exclusions &#61; map&#40;string&#41;&#10;&#125;&#41;&#41;">map&#40;object&#40;&#123;&#8230;&#125;&#41;&#41;</code> |  | <code>&#123;&#125;</code> |
-| [metric_scopes](variables.tf#L124) | List of projects that will act as metric scopes for this project. | <code>list&#40;string&#41;</code> |  | <code>&#91;&#93;</code> |
-| [org_policies](variables.tf#L136) | Organization policies applied to this project keyed by policy name. | <code title="map&#40;object&#40;&#123;&#10;  inherit_from_parent &#61; optional&#40;bool&#41; &#35; for list policies only.&#10;  reset               &#61; optional&#40;bool&#41;&#10;  allow &#61; optional&#40;object&#40;&#123;&#10;    all    &#61; optional&#40;bool&#41;&#10;    values &#61; optional&#40;list&#40;string&#41;&#41;&#10;  &#125;&#41;&#41;&#10;  deny &#61; optional&#40;object&#40;&#123;&#10;    all    &#61; optional&#40;bool&#41;&#10;    values &#61; optional&#40;list&#40;string&#41;&#41;&#10;  &#125;&#41;&#41;&#10;  enforce &#61; optional&#40;bool, true&#41; &#35; for boolean policies only.&#10;  rules &#61; optional&#40;list&#40;object&#40;&#123;&#10;    allow &#61; optional&#40;object&#40;&#123;&#10;      all    &#61; optional&#40;bool&#41;&#10;      values &#61; optional&#40;list&#40;string&#41;&#41;&#10;    &#125;&#41;&#41;&#10;    deny &#61; optional&#40;object&#40;&#123;&#10;      all    &#61; optional&#40;bool&#41;&#10;      values &#61; optional&#40;list&#40;string&#41;&#41;&#10;    &#125;&#41;&#41;&#10;    enforce &#61; optional&#40;bool, true&#41; &#35; for boolean policies only.&#10;    condition &#61; object&#40;&#123;&#10;      description &#61; optional&#40;string&#41;&#10;      expression  &#61; optional&#40;string&#41;&#10;      location    &#61; optional&#40;string&#41;&#10;      title       &#61; optional&#40;string&#41;&#10;    &#125;&#41;&#10;  &#125;&#41;&#41;, &#91;&#93;&#41;&#10;&#125;&#41;&#41;">map&#40;object&#40;&#123;&#8230;&#125;&#41;&#41;</code> |  | <code>&#123;&#125;</code> |
-| [org_policies_data_path](variables.tf#L176) | Path containing org policies in YAML format. | <code>string</code> |  | <code>null</code> |
-| [oslogin](variables.tf#L182) | Enable OS Login. | <code>bool</code> |  | <code>false</code> |
-| [oslogin_admins](variables.tf#L188) | List of IAM-style identities that will be granted roles necessary for OS Login administrators. | <code>list&#40;string&#41;</code> |  | <code>&#91;&#93;</code> |
-| [oslogin_users](variables.tf#L196) | List of IAM-style identities that will be granted roles necessary for OS Login users. | <code>list&#40;string&#41;</code> |  | <code>&#91;&#93;</code> |
-| [parent](variables.tf#L203) | Parent folder or organization in 'folders/folder_id' or 'organizations/org_id' format. | <code>string</code> |  | <code>null</code> |
-| [prefix](variables.tf#L213) | Prefix used to generate project id and name. | <code>string</code> |  | <code>null</code> |
+| [logging_sinks](variables.tf#L102) | Logging sinks to create for this project. | <code title="map&#40;object&#40;&#123;&#10;  bq_partitioned_table &#61; optional&#40;bool&#41;&#10;  description          &#61; optional&#40;string&#41;&#10;  destination          &#61; string&#10;  disabled             &#61; optional&#40;bool, false&#41;&#10;  exclusions           &#61; optional&#40;map&#40;string&#41;, &#123;&#125;&#41;&#10;  filter               &#61; string&#10;  iam                  &#61; optional&#40;bool, true&#41;&#10;  type                 &#61; string&#10;  unique_writer        &#61; optional&#40;bool&#41;&#10;&#125;&#41;&#41;">map&#40;object&#40;&#123;&#8230;&#125;&#41;&#41;</code> |  | <code>&#123;&#125;</code> |
+| [metric_scopes](variables.tf#L133) | List of projects that will act as metric scopes for this project. | <code>list&#40;string&#41;</code> |  | <code>&#91;&#93;</code> |
+| [org_policies](variables.tf#L145) | Organization policies applied to this project keyed by policy name. | <code title="map&#40;object&#40;&#123;&#10;  inherit_from_parent &#61; optional&#40;bool&#41; &#35; for list policies only.&#10;  reset               &#61; optional&#40;bool&#41;&#10;  rules &#61; optional&#40;list&#40;object&#40;&#123;&#10;    allow &#61; optional&#40;object&#40;&#123;&#10;      all    &#61; optional&#40;bool&#41;&#10;      values &#61; optional&#40;list&#40;string&#41;&#41;&#10;    &#125;&#41;&#41;&#10;    deny &#61; optional&#40;object&#40;&#123;&#10;      all    &#61; optional&#40;bool&#41;&#10;      values &#61; optional&#40;list&#40;string&#41;&#41;&#10;    &#125;&#41;&#41;&#10;    enforce &#61; optional&#40;bool&#41; &#35; for boolean policies only.&#10;    condition &#61; optional&#40;object&#40;&#123;&#10;      description &#61; optional&#40;string&#41;&#10;      expression  &#61; optional&#40;string&#41;&#10;      location    &#61; optional&#40;string&#41;&#10;      title       &#61; optional&#40;string&#41;&#10;    &#125;&#41;, &#123;&#125;&#41;&#10;  &#125;&#41;&#41;, &#91;&#93;&#41;&#10;&#125;&#41;&#41;">map&#40;object&#40;&#123;&#8230;&#125;&#41;&#41;</code> |  | <code>&#123;&#125;</code> |
+| [org_policies_data_path](variables.tf#L172) | Path containing org policies in YAML format. | <code>string</code> |  | <code>null</code> |
+| [oslogin](variables.tf#L178) | Enable OS Login. | <code>bool</code> |  | <code>false</code> |
+| [oslogin_admins](variables.tf#L184) | List of IAM-style identities that will be granted roles necessary for OS Login administrators. | <code>list&#40;string&#41;</code> |  | <code>&#91;&#93;</code> |
+| [oslogin_users](variables.tf#L192) | List of IAM-style identities that will be granted roles necessary for OS Login users. | <code>list&#40;string&#41;</code> |  | <code>&#91;&#93;</code> |
+| [parent](variables.tf#L199) | Parent folder or organization in 'folders/folder_id' or 'organizations/org_id' format. | <code>string</code> |  | <code>null</code> |
+| [prefix](variables.tf#L209) | Optional prefix used to generate project id and name. | <code>string</code> |  | <code>null</code> |
 | [project_create](variables.tf#L219) | Create project. When set to false, uses a data source to reference existing project. | <code>bool</code> |  | <code>true</code> |
 | [service_config](variables.tf#L225) | Configure service API activation. | <code title="object&#40;&#123;&#10;  disable_on_destroy         &#61; bool&#10;  disable_dependent_services &#61; bool&#10;&#125;&#41;">object&#40;&#123;&#8230;&#125;&#41;</code> |  | <code title="&#123;&#10;  disable_on_destroy         &#61; false&#10;  disable_dependent_services &#61; false&#10;&#125;">&#123;&#8230;&#125;</code> |
 | [service_encryption_key_ids](variables.tf#L237) | Cloud KMS encryption key in {SERVICE => [KEY_URL]} format. | <code>map&#40;list&#40;string&#41;&#41;</code> |  | <code>&#123;&#125;</code> |
