@@ -14,48 +14,26 @@
  * limitations under the License.
  */
 
-variable "nginx_image" {
-  description = "Nginx container image to use."
-  type        = string
-  default     = "nginx:1.23.1"
-}
-
-variable "docker_logging" {
-  description = "Log via the Docker gcplogs driver. Disable if you use the legacy Logging Agent instead."
-  type        = bool
-  default     = true
-}
-
-variable "runcmd_pre" {
-  description = "Extra commands to run before starting nginx."
-  type        = list(string)
-  default     = []
-}
-
-variable "runcmd_post" {
-  description = "Extra commands to run after starting nginx."
-  type        = list(string)
-  default     = []
-}
-
 variable "files" {
   description = "Map of extra files to create on the instance, path as key. Owner and permissions will use defaults if null."
   type = map(object({
     content     = string
-    owner       = string
-    permissions = string
+    owner       = optional(string, "root")
+    permissions = optional(string, "0644")
   }))
-  default = null
+  default  = {}
+  nullable = false
 }
 
-variable "users" {
-  description = "Additional list of usernames to be created."
-  type = list(object({
-    username = string,
-    uid      = number,
-  }))
-  default = [
-  ]
+variable "hello" {
+  description = "Behave like the nginx hello image by returning plain text informative responses."
+  type        = bool
+  default     = true
+  nullable    = false
 }
 
-
+variable "image" {
+  description = "Nginx container image to use."
+  type        = string
+  default     = "nginx:1.23.1"
+}
